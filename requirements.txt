@@ -1,0 +1,9 @@
+langgraph
+pyautogui
+easyocr==1.7.1
+opencv-python
+Pillow
+numpy
+pywin32
+uiautomation
+openai        
