@@ -1,14 +1,15 @@
 # desktop_automation_node.py
 """
-Desktop Automation LangGraph Node - Complete Single File Implementation
+Desktop Automation LangGraph Node - Complete Clean Implementation
 
 A LangGraph-compatible node for automating Windows desktop applications using:
 - UI Automation (primary)
-- Win32 API (fallback)
+- Win32 API (fallback) 
 - OpenAI LLM (intelligent fallback for hard-to-find elements)
+- Full AccessibleName support for better element detection
 
 Author: AI Assistant
-Version: 1.0
+Version: 2.0 - Clean Rewrite with AccessibleName Support
 """
 
 import json
@@ -117,7 +118,7 @@ class WindowManager:
 # =============================================================================
 
 class ElementDetector:
-    """Three-tier element detection: UI Automation → Win32 API → LLM fallback"""
+    """Three-tier element detection with full AccessibleName support"""
     
     def __init__(self, openai_api_key: Optional[str] = None, openai_model: str = "gpt-4"):
         self.timeout = 30
@@ -131,12 +132,12 @@ class ElementDetector:
             print("⚠️  Warning: OpenAI API key provided but openai package not installed")
     
     def find_element(self, window_name: str, field_name: str, field_type: str, timeout: int = 30) -> Optional[Any]:
-        """Find element using three-tier detection strategy"""
+        """Find element using three-tier detection strategy with accessibility support"""
         print(f"🔍 Looking for element: '{field_name}' (type: {field_type}) in window: '{window_name}'")
         
         start_time = time.time()
         while time.time() - start_time < timeout:
-            # Tier 1: UI Automation (Primary)
+            # Tier 1: UI Automation (Primary) - with accessibility support
             if UI_AUTOMATION_AVAILABLE:
                 element = self._find_with_ui_automation(window_name, field_name, field_type)
                 if element:
@@ -151,7 +152,7 @@ class ElementDetector:
             
             time.sleep(0.5)  # Wait before retrying
         
-        # Tier 3: LLM Fallback (Last resort)
+        # Tier 3: LLM Fallback (Last resort) - with accessibility support
         if self.openai_client and UI_AUTOMATION_AVAILABLE:
             print(f"🤖 Trying LLM fallback for element: {field_name}")
             element = self._find_with_llm_fallback(window_name, field_name, field_type)
@@ -163,171 +164,134 @@ class ElementDetector:
         return None
     
     def _find_with_ui_automation(self, window_name: str, field_name: str, field_type: str) -> Optional[Any]:
-        """Find element using UI Automation"""
+        """Find element using UI Automation with full accessibility support"""
         try:
             if not UI_AUTOMATION_AVAILABLE:
                 return None
-                
-            # Find the main window - try different approaches
-            window = None
             
-            # Method 1: Direct name match
-            try:
-                window = auto.WindowControl(searchDepth=1, Name=window_name)
-                if not window.Exists(0, False):
-                    window = None
-            except:
-                pass
-            
-            # Method 2: Search through all windows if direct match failed
-            if not window:
-                try:
-                    # Get desktop and search for window
-                    desktop = auto.GetRootControl()
-                    windows = desktop.GetChildren()
-                    for w in windows:
-                        try:
-                            if (hasattr(w, 'Name') and w.Name and 
-                                window_name.lower() in w.Name.lower() and
-                                hasattr(w, 'ControlType') and
-                                w.ControlType == auto.ControlType.WindowControl):
-                                window = w
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
+            # Find the main window
+            window = self._find_window(window_name)
             if not window:
                 return None
             
-            # Search strategies in order of preference
-            # Strategy 1: Exact AutomationId match
-            try:
-                elements = window.GetChildren()
-                for element in elements:
-                    try:
-                        if hasattr(element, 'AutomationId') and element.AutomationId == field_name:
-                            return {'type': 'ui_automation', 'element': element}
-                    except:
-                        continue
-                        
-                # Search recursively in children
-                def search_recursive(ctrl, target_name, max_depth=5, current_depth=0):
-                    if current_depth >= max_depth:
-                        return None
-                    try:
-                        if hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == target_name:
-                            return ctrl
-                        if hasattr(ctrl, 'Name') and ctrl.Name == target_name:
-                            return ctrl
-                        
-                        # Search children
-                        children = ctrl.GetChildren()
-                        for child in children:
-                            result = search_recursive(child, target_name, max_depth, current_depth + 1)
-                            if result:
-                                return result
-                    except:
-                        pass
-                    return None
-                
-                element = search_recursive(window, field_name)
-                if element:
-                    return {'type': 'ui_automation', 'element': element}
-                    
-            except Exception as e:
-                print(f"   AutomationId search failed: {e}")
-            
-            # Strategy 2: Exact Name match
-            try:
-                def search_by_name(ctrl, target_name, max_depth=5, current_depth=0):
-                    if current_depth >= max_depth:
-                        return None
-                    try:
-                        if hasattr(ctrl, 'Name') and ctrl.Name == target_name:
-                            return ctrl
-                        
-                        # Search children
-                        children = ctrl.GetChildren()
-                        for child in children:
-                            result = search_by_name(child, target_name, max_depth, current_depth + 1)
-                            if result:
-                                return result
-                    except:
-                        pass
-                    return None
-                
-                element = search_by_name(window, field_name)
-                if element:
-                    return {'type': 'ui_automation', 'element': element}
-                    
-            except Exception as e:
-                print(f"   Name search failed: {e}")
-            
-            # Strategy 3: ClassName partial match
-            if field_type:
-                try:
-                    def search_by_class(ctrl, target_name, max_depth=5, current_depth=0):
-                        if current_depth >= max_depth:
-                            return None
-                        try:
-                            if (hasattr(ctrl, 'ClassName') and ctrl.ClassName and 
-                                target_name.lower() in ctrl.ClassName.lower()):
-                                return ctrl
-                            
-                            # Search children
-                            children = ctrl.GetChildren()
-                            for child in children:
-                                result = search_by_class(child, target_name, max_depth, current_depth + 1)
-                                if result:
-                                    return result
-                        except:
-                            pass
-                        return None
-                    
-                    element = search_by_class(window, field_name)
-                    if element:
-                        return {'type': 'ui_automation', 'element': element}
-                        
-                except Exception as e:
-                    print(f"   ClassName search failed: {e}")
-            
-            # Strategy 4: For Notepad specifically, try finding Edit controls
-            if 'notepad' in window_name.lower():
-                try:
-                    def find_edit_control(ctrl, max_depth=5, current_depth=0):
-                        if current_depth >= max_depth:
-                            return None
-                        try:
-                            # Look for Edit or Document controls
-                            if (hasattr(ctrl, 'ControlType') and 
-                                (ctrl.ControlType == auto.ControlType.EditControl or
-                                 ctrl.ControlType == auto.ControlType.DocumentControl)):
-                                return ctrl
-                            
-                            # Search children
-                            children = ctrl.GetChildren()
-                            for child in children:
-                                result = find_edit_control(child, max_depth, current_depth + 1)
-                                if result:
-                                    return result
-                        except:
-                            pass
-                        return None
-                    
-                    element = find_edit_control(window)
-                    if element:
-                        return {'type': 'ui_automation', 'element': element}
-                        
-                except Exception as e:
-                    print(f"   Edit control search failed: {e}")
+            # Comprehensive search with ALL accessibility properties
+            element = self._search_element_comprehensive(window, field_name)
+            if element:
+                return {'type': 'ui_automation', 'element': element}
             
             return None
             
         except Exception as e:
             print(f"⚠️  UI Automation search failed: {str(e)}")
             return None
+    
+    def _find_window(self, window_name: str):
+        """Find window using multiple strategies"""
+        # Method 1: Direct name match
+        try:
+            window = auto.WindowControl(searchDepth=1, Name=window_name)
+            if window.Exists(0, False):
+                return window
+        except:
+            pass
+        
+        # Method 2: Search through all windows
+        try:
+            desktop = auto.GetRootControl()
+            windows = desktop.GetChildren()
+            for w in windows:
+                try:
+                    if (hasattr(w, 'Name') and w.Name and 
+                        window_name.lower() in w.Name.lower() and
+                        hasattr(w, 'ControlType') and
+                        w.ControlType == auto.ControlType.WindowControl):
+                        return w
+                except:
+                    continue
+        except:
+            pass
+        
+        return None
+    
+    def _search_element_comprehensive(self, window, field_name: str, max_depth: int = 5):
+        """Comprehensive element search with ALL accessibility properties"""
+        def search_recursive(ctrl, target_name, current_depth=0):
+            if current_depth >= max_depth:
+                return None
+            
+            try:
+                # Standard property checks
+                if hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == target_name:
+                    return ctrl
+                if hasattr(ctrl, 'Name') and ctrl.Name == target_name:
+                    return ctrl
+                
+                # Accessibility property checks - THE KEY ENHANCEMENT!
+                if hasattr(ctrl, 'AccessibleName') and ctrl.AccessibleName == target_name:
+                    return ctrl
+                
+                # Advanced accessibility checks via GetPropertyValue
+                try:
+                    name_prop = ctrl.GetPropertyValue(auto.PropertyId.NameProperty)
+                    if name_prop and str(name_prop) == target_name:
+                        return ctrl
+                except:
+                    pass
+                
+                try:
+                    legacy_name = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleNameProperty)
+                    if legacy_name and str(legacy_name) == target_name:
+                        return ctrl
+                except:
+                    pass
+                
+                try:
+                    legacy_value = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleValueProperty)
+                    if legacy_value and str(legacy_value) == target_name:
+                        return ctrl
+                except:
+                    pass
+                
+                # Partial matching for accessibility properties
+                accessibility_values = []
+                
+                if hasattr(ctrl, 'Name') and ctrl.Name:
+                    accessibility_values.append(ctrl.Name)
+                if hasattr(ctrl, 'AccessibleName') and ctrl.AccessibleName:
+                    accessibility_values.append(ctrl.AccessibleName)
+                
+                try:
+                    name_prop = ctrl.GetPropertyValue(auto.PropertyId.NameProperty)
+                    if name_prop:
+                        accessibility_values.append(str(name_prop))
+                except:
+                    pass
+                
+                try:
+                    legacy_name = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleNameProperty)
+                    if legacy_name:
+                        accessibility_values.append(str(legacy_name))
+                except:
+                    pass
+                
+                # Check partial matches
+                for value in accessibility_values:
+                    if target_name.lower() in value.lower() or value.lower() in target_name.lower():
+                        return ctrl
+                
+                # Search children recursively
+                children = ctrl.GetChildren()
+                for child in children:
+                    result = search_recursive(child, target_name, current_depth + 1)
+                    if result:
+                        return result
+                        
+            except:
+                pass
+            
+            return None
+        
+        return search_recursive(window, field_name)
     
     def _find_with_win32_api(self, window_name: str, field_name: str, field_type: str) -> Optional[Any]:
         """Find element using Win32 API"""
@@ -393,20 +357,20 @@ class ElementDetector:
             return None
     
     def _find_with_llm_fallback(self, window_name: str, field_name: str, field_type: str) -> Optional[Any]:
-        """Use LLM to analyze all UI elements and find the best match"""
+        """Use LLM to analyze all UI elements with accessibility support"""
         try:
             if not self.openai_client or not UI_AUTOMATION_AVAILABLE:
                 return None
             
-            print("📊 Collecting all UI elements for LLM analysis...")
+            print("📊 Collecting all UI elements (including accessibility) for LLM analysis...")
             
-            # Get all UI elements from the window
+            # Get all UI elements with accessibility properties
             all_elements = self._collect_all_ui_elements(window_name)
             if not all_elements:
                 print("❌ No UI elements found for LLM analysis")
                 return None
             
-            # Prepare the LLM prompt
+            # Create enhanced prompt for LLM
             prompt = self._create_llm_prompt(field_name, field_type, all_elements)
             
             # Get LLM response
@@ -414,7 +378,7 @@ class ElementDetector:
             if not llm_response:
                 return None
             
-            # Parse LLM response and find the element
+            # Find element based on LLM response
             return self._find_element_from_llm_response(llm_response, window_name)
             
         except Exception as e:
@@ -422,37 +386,9 @@ class ElementDetector:
             return None
     
     def _collect_all_ui_elements(self, window_name: str) -> List[Dict[str, Any]]:
-        """Collect all UI elements from the window with their properties"""
+        """Collect all UI elements with comprehensive accessibility properties"""
         try:
-            # Find the main window
-            window = None
-            
-            # Try direct name match first
-            try:
-                window = auto.WindowControl(searchDepth=1, Name=window_name)
-                if not window.Exists(0, False):
-                    window = None
-            except:
-                pass
-            
-            # If direct match failed, search through all windows
-            if not window:
-                try:
-                    desktop = auto.GetRootControl()
-                    windows = desktop.GetChildren()
-                    for w in windows:
-                        try:
-                            if (hasattr(w, 'Name') and w.Name and 
-                                window_name.lower() in w.Name.lower() and
-                                hasattr(w, 'ControlType') and
-                                w.ControlType == auto.ControlType.WindowControl):
-                                window = w
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
+            window = self._find_window(window_name)
             if not window:
                 return []
             
@@ -460,26 +396,10 @@ class ElementDetector:
             
             def collect_element_info(ctrl, depth):
                 try:
-                    # Limit depth to avoid infinite recursion
-                    if depth > 10:
+                    if depth > 10:  # Limit recursion depth
                         return
                     
-                    # Skip invisible or problematic elements
-                    try:
-                        if not hasattr(ctrl, 'IsEnabled') or not ctrl.IsEnabled:
-                            return
-                        
-                        if hasattr(ctrl, 'BoundingRectangle') and ctrl.BoundingRectangle:
-                            rect = ctrl.BoundingRectangle
-                            if rect.width() < 5 or rect.height() < 5:
-                                return
-                        else:
-                            # If no bounding rectangle, skip size check
-                            pass
-                    except:
-                        # If we can't check properties, skip this element
-                        return
-                    
+                    # Basic element info
                     element_info = {
                         'name': getattr(ctrl, 'Name', ''),
                         'automation_id': getattr(ctrl, 'AutomationId', ''),
@@ -492,28 +412,55 @@ class ElementDetector:
                         'access_key': getattr(ctrl, 'AccessKey', ''),
                     }
                     
-                    # Try to get bounds, but don't fail if we can't
+                    # Comprehensive accessibility properties - THE KEY ENHANCEMENT!
+                    element_info['accessible_name'] = getattr(ctrl, 'AccessibleName', '')
+                    
+                    # Advanced accessibility properties via GetPropertyValue
+                    try:
+                        name_prop = ctrl.GetPropertyValue(auto.PropertyId.NameProperty)
+                        element_info['name_property'] = str(name_prop) if name_prop else ''
+                    except:
+                        element_info['name_property'] = ''
+                    
+                    try:
+                        legacy_name = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleNameProperty)
+                        element_info['legacy_accessible_name'] = str(legacy_name) if legacy_name else ''
+                    except:
+                        element_info['legacy_accessible_name'] = ''
+                    
+                    try:
+                        legacy_value = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleValueProperty)
+                        element_info['legacy_accessible_value'] = str(legacy_value) if legacy_value else ''
+                    except:
+                        element_info['legacy_accessible_value'] = ''
+                    
+                    try:
+                        legacy_desc = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleDescriptionProperty)
+                        element_info['legacy_accessible_description'] = str(legacy_desc) if legacy_desc else ''
+                    except:
+                        element_info['legacy_accessible_description'] = ''
+                    
+                    # Bounds information
                     try:
                         if hasattr(ctrl, 'BoundingRectangle') and ctrl.BoundingRectangle:
                             rect = ctrl.BoundingRectangle
                             element_info['bounds'] = {
-                                'x': rect.left,
-                                'y': rect.top,
-                                'width': rect.width(),
-                                'height': rect.height()
+                                'x': rect.left, 'y': rect.top,
+                                'width': rect.width(), 'height': rect.height()
                             }
                         else:
                             element_info['bounds'] = {'x': 0, 'y': 0, 'width': 0, 'height': 0}
                     except:
                         element_info['bounds'] = {'x': 0, 'y': 0, 'width': 0, 'height': 0}
                     
-                    # Only add elements with some identifying information
-                    if (element_info['name'] or 
-                        element_info['automation_id'] or 
-                        element_info['class_name']):
+                    # Include element if it has ANY identifying information (including accessibility)
+                    if (element_info['name'] or element_info['automation_id'] or 
+                        element_info['class_name'] or element_info['accessible_name'] or
+                        element_info['name_property'] or element_info['legacy_accessible_name'] or
+                        element_info['legacy_accessible_value']):
                         elements.append(element_info)
                     
-                    # Recursively collect child elements
+                    # Recursively collect children
                     try:
                         children = ctrl.GetChildren()
                         for child in children:
@@ -521,14 +468,11 @@ class ElementDetector:
                     except:
                         pass
                         
-                except Exception:
-                    # Skip problematic elements
-                    pass
+                except:
+                    pass  # Skip problematic elements
             
-            # Start collection from the main window
             collect_element_info(window, 0)
-            
-            print(f"📊 Collected {len(elements)} UI elements for LLM analysis")
+            print(f"📊 Collected {len(elements)} UI elements with accessibility properties")
             return elements
             
         except Exception as e:
@@ -536,7 +480,7 @@ class ElementDetector:
             return []
     
     def _create_llm_prompt(self, field_name: str, field_type: str, elements: List[Dict[str, Any]]) -> str:
-        """Create a prompt for the LLM to analyze elements"""
+        """Create enhanced LLM prompt emphasizing accessibility properties"""
         elements_json = json.dumps(elements, indent=2)
         
         prompt = f"""I need to find a UI element in a Windows desktop application. Here are the details:
@@ -545,63 +489,63 @@ TARGET ELEMENT:
 - Field Name: "{field_name}"
 - Field Type: "{field_type}"
 
-AVAILABLE UI ELEMENTS:
+AVAILABLE UI ELEMENTS (with full accessibility properties):
 {elements_json}
 
 TASK:
-Analyze all the UI elements and identify which one best matches the target element "{field_name}" of type "{field_type}".
+Find the element that best matches "{field_name}". The field name might be stored in ANY of these properties:
 
-Consider these matching strategies:
-1. Exact match on 'name', 'automation_id', or 'class_name'
-2. Partial match (case-insensitive) on any text property
-3. Control type compatibility (e.g., "editable text" → EditControl, TextBox)
-4. Contextual similarity (e.g., "btn" prefix for buttons, "txt" for text fields)
+🔍 SEARCH PRIORITY (check ALL of these):
+1. automation_id (AutomationId property)
+2. name (Name property)
+3. accessible_name (AccessibleName property) ⭐ VERY IMPORTANT
+4. name_property (NameProperty via GetPropertyValue) 
+5. legacy_accessible_name (Legacy IAccessible Name) ⭐ IMPORTANT
+6. legacy_accessible_value (Legacy IAccessible Value)
+7. class_name (ClassName property)
 
-RESPONSE FORMAT:
-Return ONLY a JSON object with the exact element properties that match, like this:
+MATCHING STRATEGIES:
+- Exact match on ANY accessibility property
+- Partial match (case-insensitive) on accessibility properties
+- Control type compatibility
+- Contextual similarity
+
+RESPONSE FORMAT (JSON only):
 {{
     "matched_element": {{
         "name": "exact_name_from_list",
-        "automation_id": "exact_automation_id_from_list", 
+        "automation_id": "exact_automation_id_from_list",
+        "accessible_name": "exact_accessible_name_from_list",
+        "legacy_accessible_name": "exact_legacy_accessible_name_from_list",
         "class_name": "exact_class_name_from_list",
         "control_type": "exact_control_type_from_list"
     }},
     "confidence": 0.95,
-    "reasoning": "Brief explanation of why this element matches"
+    "reasoning": "Brief explanation of match",
+    "matched_property": "name_of_property_that_matched"
 }}
 
-If no good match is found, return:
-{{
-    "matched_element": null,
-    "confidence": 0.0,
-    "reasoning": "No suitable match found"
-}}
-
-IMPORTANT: Only return valid JSON. Do not include any other text or explanation outside the JSON."""
+If no match: {{"matched_element": null, "confidence": 0.0, "reasoning": "No match found", "matched_property": null}}"""
+        
         return prompt
     
     def _query_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
-        """Query the LLM and parse the response"""
+        """Query LLM and parse response"""
         try:
             response = self.openai_client.chat.completions.create(
                 model=self.openai_model,
                 messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are an expert at analyzing Windows UI elements. Return only valid JSON responses."
-                    },
+                    {"role": "system", "content": "You are an expert at Windows UI element analysis. Return only valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.1,  # Low temperature for consistent results
+                temperature=0.1,
                 max_tokens=1000
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Try to parse the JSON response
             try:
-                llm_result = json.loads(response_text)
-                return llm_result
+                return json.loads(response_text)
             except json.JSONDecodeError:
                 print(f"❌ LLM returned invalid JSON: {response_text}")
                 return None
@@ -611,78 +555,75 @@ IMPORTANT: Only return valid JSON. Do not include any other text or explanation 
             return None
     
     def _find_element_from_llm_response(self, llm_response: Dict[str, Any], window_name: str) -> Optional[Any]:
-        """Find the actual UI element based on LLM response"""
+        """Find element based on LLM response with accessibility support"""
         try:
             matched_element = llm_response.get('matched_element')
             confidence = llm_response.get('confidence', 0.0)
             reasoning = llm_response.get('reasoning', '')
+            matched_property = llm_response.get('matched_property', '')
             
-            print(f"🤖 LLM Response - Confidence: {confidence:.2f}, Reasoning: {reasoning}")
+            print(f"🤖 LLM Match - Confidence: {confidence:.2f}, Property: {matched_property}")
+            print(f"   Reasoning: {reasoning}")
             
             if not matched_element or confidence < 0.5:
                 print("❌ LLM confidence too low or no match found")
                 return None
             
-            # Find the window again
-            window = None
-            try:
-                window = auto.WindowControl(searchDepth=1, Name=window_name)
-                if not window.Exists(0, False):
-                    window = None
-            except:
-                pass
-            
-            if not window:
-                try:
-                    desktop = auto.GetRootControl()
-                    windows = desktop.GetChildren()
-                    for w in windows:
-                        try:
-                            if (hasattr(w, 'Name') and w.Name and 
-                                window_name.lower() in w.Name.lower() and
-                                hasattr(w, 'ControlType') and
-                                w.ControlType == auto.ControlType.WindowControl):
-                                window = w
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
+            window = self._find_window(window_name)
             if not window:
                 return None
             
-            # Search for the element using LLM-provided properties
-            name = matched_element.get('name', '')
-            automation_id = matched_element.get('automation_id', '')
-            class_name = matched_element.get('class_name', '')
+            # Extract all possible identifiers from LLM response
+            search_criteria = {
+                'name': matched_element.get('name', ''),
+                'automation_id': matched_element.get('automation_id', ''),
+                'accessible_name': matched_element.get('accessible_name', ''),
+                'legacy_accessible_name': matched_element.get('legacy_accessible_name', ''),
+                'class_name': matched_element.get('class_name', '')
+            }
             
-            # Search function that works without FindFirst
-            def search_element(ctrl, target_name, target_automation_id, target_class, max_depth=5, current_depth=0):
+            # Search using the comprehensive method
+            def search_with_llm_criteria(ctrl, criteria, max_depth=5, current_depth=0):
                 if current_depth >= max_depth:
                     return None
+                
                 try:
-                    # Check if this control matches
-                    if target_automation_id and hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == target_automation_id:
+                    # Check all criteria from LLM
+                    if criteria['automation_id'] and hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == criteria['automation_id']:
                         return ctrl
-                    if target_name and hasattr(ctrl, 'Name') and ctrl.Name == target_name:
+                    if criteria['name'] and hasattr(ctrl, 'Name') and ctrl.Name == criteria['name']:
                         return ctrl
-                    if target_class and hasattr(ctrl, 'ClassName') and ctrl.ClassName == target_class:
+                    if criteria['accessible_name'] and hasattr(ctrl, 'AccessibleName') and ctrl.AccessibleName == criteria['accessible_name']:
                         return ctrl
+                    if criteria['class_name'] and hasattr(ctrl, 'ClassName') and ctrl.ClassName == criteria['class_name']:
+                        return ctrl
+                    
+                    # Check legacy accessible name
+                    if criteria['legacy_accessible_name']:
+                        try:
+                            legacy_name = ctrl.GetPropertyValue(auto.PropertyId.LegacyIAccessibleNameProperty)
+                            if legacy_name and str(legacy_name) == criteria['legacy_accessible_name']:
+                                return ctrl
+                        except:
+                            pass
                     
                     # Search children
                     children = ctrl.GetChildren()
                     for child in children:
-                        result = search_element(child, target_name, target_automation_id, target_class, max_depth, current_depth + 1)
+                        result = search_with_llm_criteria(child, criteria, max_depth, current_depth + 1)
                         if result:
                             return result
+                            
                 except:
                     pass
+                
                 return None
             
-            element = search_element(window, name, automation_id, class_name)
+            element = search_with_llm_criteria(window, search_criteria)
             if element:
-                print(f"✅ Found element using LLM guidance: {name or automation_id or class_name}")
+                identifier = (search_criteria['accessible_name'] or search_criteria['name'] or 
+                            search_criteria['automation_id'] or search_criteria['class_name'])
+                print(f"✅ Found element via LLM guidance: {identifier}")
                 return {'type': 'ui_automation', 'element': element}
             
             print("❌ Could not find element despite LLM guidance")
@@ -703,20 +644,11 @@ class ActionExecutor:
     def __init__(self):
         # Special key mappings for Win32 API
         self.special_keys = {
-            'enter': win32con.VK_RETURN,
-            'tab': win32con.VK_TAB,
-            'escape': win32con.VK_ESCAPE,
-            'space': win32con.VK_SPACE,
-            'backspace': win32con.VK_BACK,
-            'delete': win32con.VK_DELETE,
-            'home': win32con.VK_HOME,
-            'end': win32con.VK_END,
-            'pageup': win32con.VK_PRIOR,
-            'pagedown': win32con.VK_NEXT,
-            'up': win32con.VK_UP,
-            'down': win32con.VK_DOWN,
-            'left': win32con.VK_LEFT,
-            'right': win32con.VK_RIGHT,
+            'enter': win32con.VK_RETURN, 'tab': win32con.VK_TAB, 'escape': win32con.VK_ESCAPE,
+            'space': win32con.VK_SPACE, 'backspace': win32con.VK_BACK, 'delete': win32con.VK_DELETE,
+            'home': win32con.VK_HOME, 'end': win32con.VK_END, 'pageup': win32con.VK_PRIOR,
+            'pagedown': win32con.VK_NEXT, 'up': win32con.VK_UP, 'down': win32con.VK_DOWN,
+            'left': win32con.VK_LEFT, 'right': win32con.VK_RIGHT,
         }
         
         # Function keys F1-F12
@@ -756,12 +688,10 @@ class ActionExecutor:
                 
             elif element['type'] == 'win32':
                 hwnd = element['hwnd']
-                # Get element position and click
                 rect = win32gui.GetWindowRect(hwnd)
                 x = (rect[0] + rect[2]) // 2
                 y = (rect[1] + rect[3]) // 2
                 
-                # Send click message
                 win32gui.SetForegroundWindow(hwnd)
                 win32api.SetCursorPos((x, y))
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
@@ -778,15 +708,13 @@ class ActionExecutor:
     def _type_into_element(self, element: Dict[str, Any], text: str) -> bool:
         """Type text into the element"""
         try:
-            # First click on the element to focus it
             self._click_element(element)
             time.sleep(0.2)
             
             if element['type'] == 'ui_automation':
                 ui_element = element['element']
-                # Clear existing text and type new text
                 ui_element.SendKeys('{Ctrl}a')
-                time.sleep(0.1)
+                time.sleep(0.5)
                 ui_element.SendKeys(text)
                 print(f"⌨️  Typed '{text}' via UI Automation")
                 return True
@@ -799,7 +727,7 @@ class ActionExecutor:
                 win32gui.SendMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_CONTROL, 0)
                 win32gui.SendMessage(hwnd, win32con.WM_CHAR, ord('a'), 0)
                 win32gui.SendMessage(hwnd, win32con.WM_KEYUP, win32con.VK_CONTROL, 0)
-                time.sleep(0.1)
+                time.sleep(0.5)
                 
                 # Type new text
                 for char in text:
@@ -818,11 +746,9 @@ class ActionExecutor:
     def _key_press(self, element: Dict[str, Any], key_combination: str) -> bool:
         """Press special keys or key combinations"""
         try:
-            # First focus the element
             self._click_element(element)
             time.sleep(0.1)
             
-            # Parse key combination
             keys = key_combination.lower().split('+')
             modifier_keys = []
             main_key = None
@@ -889,6 +815,7 @@ class ActionExecutor:
         try:
             if element['type'] == 'ui_automation':
                 ui_element = element['element']
+                
                 # Try to expand if it's a combobox
                 try:
                     ui_element.Expand()
@@ -896,32 +823,32 @@ class ActionExecutor:
                 except:
                     pass
                 
-                # Find and select the item
-                item = ui_element.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'Name') and ctrl.Name.lower() == value.lower()
-                )
+                # Try to find and select the item
+                try:
+                    children = ui_element.GetChildren()
+                    for child in children:
+                        if hasattr(child, 'Name') and child.Name.lower() == value.lower():
+                            child.Select()
+                            print(f"📋 Selected '{value}' from dropdown via UI Automation")
+                            return True
+                except:
+                    pass
                 
-                if item:
-                    item.Select()
-                    print(f"📋 Selected '{value}' from dropdown via UI Automation")
-                    return True
-                else:
-                    # Try clicking and typing
-                    ui_element.Click()
-                    time.sleep(0.2)
-                    ui_element.SendKeys(value)
-                    time.sleep(0.2)
-                    ui_element.SendKeys('{Enter}')
-                    print(f"📋 Selected '{value}' by typing via UI Automation")
-                    return True
+                # Fallback: click and type
+                ui_element.Click()
+                time.sleep(0.2)
+                ui_element.SendKeys(value)
+                time.sleep(0.2)
+                ui_element.SendKeys('{Enter}')
+                print(f"📋 Selected '{value}' by typing via UI Automation")
+                return True
                     
             elif element['type'] == 'win32':
                 hwnd = element['hwnd']
-                # Click on the element first
                 self._click_element(element)
                 time.sleep(0.2)
                 
-                # Try sending the text directly
+                # Type the value
                 for char in value:
                     win32gui.SendMessage(hwnd, win32con.WM_CHAR, ord(char), 0)
                     time.sleep(0.01)
@@ -941,18 +868,12 @@ class ActionExecutor:
     def _build_ui_automation_key_string(self, keys):
         """Build UI Automation key string from key combination"""
         key_map = {
-            'ctrl': '{Ctrl}',
-            'alt': '{Alt}',
-            'shift': '{Shift}',
-            'enter': '{Enter}',
-            'tab': '{Tab}',
-            'escape': '{Esc}',
-            'space': ' ',
-            'backspace': '{Backspace}',
-            'delete': '{Delete}',
+            'ctrl': '{Ctrl}', 'alt': '{Alt}', 'shift': '{Shift}',
+            'enter': '{Enter}', 'tab': '{Tab}', 'escape': '{Esc}',
+            'space': ' ', 'backspace': '{Backspace}', 'delete': '{Delete}',
         }
         
-        # Handle function keys
+        # Function keys
         for i in range(1, 13):
             key_map[f'f{i}'] = f'{{F{i}}}'
         
@@ -970,7 +891,6 @@ class ActionExecutor:
             # Add the main key
             main_key = keys[-1].strip().lower()
             result += key_map.get(main_key, main_key)
-            
             return result
 
 
@@ -980,10 +900,10 @@ class ActionExecutor:
 
 class DesktopAutomationNode:
     """
-    Main LangGraph node for desktop automation
+    Main LangGraph node for desktop automation with full AccessibleName support
     
-    Integrates WindowManager, ElementDetector, and ActionExecutor
-    to provide complete desktop automation capabilities.
+    Integrates WindowManager, ElementDetector, and ActionExecutor to provide
+    complete desktop automation capabilities with enhanced accessibility support.
     """
     
     def __init__(self, openai_api_key: Optional[str] = None, openai_model: str = "gpt-4"):
@@ -994,7 +914,7 @@ class DesktopAutomationNode:
             openai_api_key: Optional OpenAI API key for LLM fallback
             openai_model: OpenAI model to use (default: gpt-4)
         """
-        print("🚀 Initializing Desktop Automation Node...")
+        print("🚀 Initializing Desktop Automation Node with AccessibleName support...")
         self.window_manager = WindowManager()
         self.element_detector = ElementDetector(openai_api_key, openai_model)
         self.action_executor = ActionExecutor()
@@ -1122,7 +1042,7 @@ class DesktopAutomationNode:
         if action_type == 'windowactivate':
             return self.window_manager.activate_window(window_name or field_name)
         
-        # For other actions, find the element first
+        # For other actions, find the element first (with AccessibleName support)
         element = self.element_detector.find_element(
             window_name=window_name,
             field_name=field_name,
@@ -1198,9 +1118,10 @@ __all__ = [
 
 if __name__ == "__main__":
     """
-    Demo script to test the desktop automation node
+    Demo script to test the desktop automation node with AccessibleName support
     """
-    print("🖥️  Desktop Automation Node - Single File Implementation")
+    print("🖥️  Desktop Automation Node - Complete Clean Implementation")
+    print("🎯 Now with full AccessibleName support!")
     print("=" * 80)
     
     # Sample automation steps (your original data)
@@ -1255,7 +1176,7 @@ if __name__ == "__main__":
         }
     ]
     
-    # Simple demo with Notepad (more accessible for testing)
+    # Notepad test (for quick validation)
     notepad_steps = [
         {
             "window_name": "Untitled - Notepad",
@@ -1271,13 +1192,13 @@ if __name__ == "__main__":
             "field_type": "editable text",
             "event_action_type": "typeInto",
             "SpecialKeyWithData": "",
-            "Data": "Hello from Desktop Automation Node!"
+            "Data": "Hello from Enhanced Desktop Automation with AccessibleName support!"
         }
     ]
     
     print("Choose a test option:")
-    print("1. Test with your Settlement Request application")
-    print("2. Test with Notepad (recommended for initial testing)")
+    print("1. Test with your Settlement Request application (AccessibleName support)")
+    print("2. Test with Notepad (quick validation)")
     print("3. Exit")
     
     choice = input("\nEnter choice (1-3): ").strip()
@@ -1293,6 +1214,8 @@ if __name__ == "__main__":
         # Create state and node
         state = create_sample_state(exe_path, sample_steps)
         node = create_automation_node(openai_key if openai_key else None)
+        
+        print("\n🎯 Testing with AccessibleName support - your field names should now be found!")
         
         # Execute automation
         result = node.execute_automation(state)
