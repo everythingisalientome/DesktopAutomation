@@ -168,42 +168,160 @@ class ElementDetector:
             if not UI_AUTOMATION_AVAILABLE:
                 return None
                 
-            # Find the main window
-            window = auto.WindowControl(searchDepth=1, Name=window_name)
-            if not window.Exists(0, False):
-                # Try finding by partial name
-                windows = auto.FindAll(lambda ctrl, depth: 
-                    ctrl.ControlType == auto.ControlType.WindowControl and 
-                    window_name.lower() in ctrl.Name.lower()
-                )
-                if windows:
-                    window = windows[0]
-                else:
-                    return None
+            # Find the main window - try different approaches
+            window = None
+            
+            # Method 1: Direct name match
+            try:
+                window = auto.WindowControl(searchDepth=1, Name=window_name)
+                if not window.Exists(0, False):
+                    window = None
+            except:
+                pass
+            
+            # Method 2: Search through all windows if direct match failed
+            if not window:
+                try:
+                    # Get desktop and search for window
+                    desktop = auto.GetRootControl()
+                    windows = desktop.GetChildren()
+                    for w in windows:
+                        try:
+                            if (hasattr(w, 'Name') and w.Name and 
+                                window_name.lower() in w.Name.lower() and
+                                hasattr(w, 'ControlType') and
+                                w.ControlType == auto.ControlType.WindowControl):
+                                window = w
+                                break
+                        except:
+                            continue
+                except:
+                    pass
+            
+            if not window:
+                return None
             
             # Search strategies in order of preference
-            search_strategies = [
-                # Strategy 1: Exact AutomationId match
-                lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == field_name
-                ),
-                # Strategy 2: Exact Name match
-                lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'Name') and ctrl.Name == field_name
-                ),
-                # Strategy 3: Partial ClassName match
-                lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'ClassName') and field_name.lower() in ctrl.ClassName.lower()
-                ) if field_type else None
-            ]
+            # Strategy 1: Exact AutomationId match
+            try:
+                elements = window.GetChildren()
+                for element in elements:
+                    try:
+                        if hasattr(element, 'AutomationId') and element.AutomationId == field_name:
+                            return {'type': 'ui_automation', 'element': element}
+                    except:
+                        continue
+                        
+                # Search recursively in children
+                def search_recursive(ctrl, target_name, max_depth=5, current_depth=0):
+                    if current_depth >= max_depth:
+                        return None
+                    try:
+                        if hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == target_name:
+                            return ctrl
+                        if hasattr(ctrl, 'Name') and ctrl.Name == target_name:
+                            return ctrl
+                        
+                        # Search children
+                        children = ctrl.GetChildren()
+                        for child in children:
+                            result = search_recursive(child, target_name, max_depth, current_depth + 1)
+                            if result:
+                                return result
+                    except:
+                        pass
+                    return None
+                
+                element = search_recursive(window, field_name)
+                if element:
+                    return {'type': 'ui_automation', 'element': element}
+                    
+            except Exception as e:
+                print(f"   AutomationId search failed: {e}")
             
-            for strategy in search_strategies:
+            # Strategy 2: Exact Name match
+            try:
+                def search_by_name(ctrl, target_name, max_depth=5, current_depth=0):
+                    if current_depth >= max_depth:
+                        return None
+                    try:
+                        if hasattr(ctrl, 'Name') and ctrl.Name == target_name:
+                            return ctrl
+                        
+                        # Search children
+                        children = ctrl.GetChildren()
+                        for child in children:
+                            result = search_by_name(child, target_name, max_depth, current_depth + 1)
+                            if result:
+                                return result
+                    except:
+                        pass
+                    return None
+                
+                element = search_by_name(window, field_name)
+                if element:
+                    return {'type': 'ui_automation', 'element': element}
+                    
+            except Exception as e:
+                print(f"   Name search failed: {e}")
+            
+            # Strategy 3: ClassName partial match
+            if field_type:
                 try:
-                    element = strategy()
+                    def search_by_class(ctrl, target_name, max_depth=5, current_depth=0):
+                        if current_depth >= max_depth:
+                            return None
+                        try:
+                            if (hasattr(ctrl, 'ClassName') and ctrl.ClassName and 
+                                target_name.lower() in ctrl.ClassName.lower()):
+                                return ctrl
+                            
+                            # Search children
+                            children = ctrl.GetChildren()
+                            for child in children:
+                                result = search_by_class(child, target_name, max_depth, current_depth + 1)
+                                if result:
+                                    return result
+                        except:
+                            pass
+                        return None
+                    
+                    element = search_by_class(window, field_name)
                     if element:
                         return {'type': 'ui_automation', 'element': element}
-                except:
-                    continue
+                        
+                except Exception as e:
+                    print(f"   ClassName search failed: {e}")
+            
+            # Strategy 4: For Notepad specifically, try finding Edit controls
+            if 'notepad' in window_name.lower():
+                try:
+                    def find_edit_control(ctrl, max_depth=5, current_depth=0):
+                        if current_depth >= max_depth:
+                            return None
+                        try:
+                            # Look for Edit or Document controls
+                            if (hasattr(ctrl, 'ControlType') and 
+                                (ctrl.ControlType == auto.ControlType.EditControl or
+                                 ctrl.ControlType == auto.ControlType.DocumentControl)):
+                                return ctrl
+                            
+                            # Search children
+                            children = ctrl.GetChildren()
+                            for child in children:
+                                result = find_edit_control(child, max_depth, current_depth + 1)
+                                if result:
+                                    return result
+                        except:
+                            pass
+                        return None
+                    
+                    element = find_edit_control(window)
+                    if element:
+                        return {'type': 'ui_automation', 'element': element}
+                        
+                except Exception as e:
+                    print(f"   Edit control search failed: {e}")
             
             return None
             
@@ -307,17 +425,36 @@ class ElementDetector:
         """Collect all UI elements from the window with their properties"""
         try:
             # Find the main window
-            window = auto.WindowControl(searchDepth=1, Name=window_name)
-            if not window.Exists(0, False):
-                # Try finding by partial name
-                windows = auto.FindAll(lambda ctrl, depth: 
-                    ctrl.ControlType == auto.ControlType.WindowControl and 
-                    window_name.lower() in ctrl.Name.lower()
-                )
-                if windows:
-                    window = windows[0]
-                else:
-                    return []
+            window = None
+            
+            # Try direct name match first
+            try:
+                window = auto.WindowControl(searchDepth=1, Name=window_name)
+                if not window.Exists(0, False):
+                    window = None
+            except:
+                pass
+            
+            # If direct match failed, search through all windows
+            if not window:
+                try:
+                    desktop = auto.GetRootControl()
+                    windows = desktop.GetChildren()
+                    for w in windows:
+                        try:
+                            if (hasattr(w, 'Name') and w.Name and 
+                                window_name.lower() in w.Name.lower() and
+                                hasattr(w, 'ControlType') and
+                                w.ControlType == auto.ControlType.WindowControl):
+                                window = w
+                                break
+                        except:
+                            continue
+                except:
+                    pass
+            
+            if not window:
+                return []
             
             elements = []
             
@@ -327,15 +464,20 @@ class ElementDetector:
                     if depth > 10:
                         return
                     
-                    # Skip invisible or very small elements
-                    if not hasattr(ctrl, 'IsEnabled') or not ctrl.IsEnabled:
-                        return
-                    
-                    if not hasattr(ctrl, 'BoundingRectangle') or not ctrl.BoundingRectangle:
-                        return
-                    
-                    rect = ctrl.BoundingRectangle
-                    if rect.width() < 5 or rect.height() < 5:
+                    # Skip invisible or problematic elements
+                    try:
+                        if not hasattr(ctrl, 'IsEnabled') or not ctrl.IsEnabled:
+                            return
+                        
+                        if hasattr(ctrl, 'BoundingRectangle') and ctrl.BoundingRectangle:
+                            rect = ctrl.BoundingRectangle
+                            if rect.width() < 5 or rect.height() < 5:
+                                return
+                        else:
+                            # If no bounding rectangle, skip size check
+                            pass
+                    except:
+                        # If we can't check properties, skip this element
                         return
                     
                     element_info = {
@@ -348,13 +490,22 @@ class ElementDetector:
                         'is_visible': getattr(ctrl, 'IsVisible', False),
                         'help_text': getattr(ctrl, 'HelpText', ''),
                         'access_key': getattr(ctrl, 'AccessKey', ''),
-                        'bounds': {
-                            'x': rect.left,
-                            'y': rect.top,
-                            'width': rect.width(),
-                            'height': rect.height()
-                        }
                     }
+                    
+                    # Try to get bounds, but don't fail if we can't
+                    try:
+                        if hasattr(ctrl, 'BoundingRectangle') and ctrl.BoundingRectangle:
+                            rect = ctrl.BoundingRectangle
+                            element_info['bounds'] = {
+                                'x': rect.left,
+                                'y': rect.top,
+                                'width': rect.width(),
+                                'height': rect.height()
+                            }
+                        else:
+                            element_info['bounds'] = {'x': 0, 'y': 0, 'width': 0, 'height': 0}
+                    except:
+                        element_info['bounds'] = {'x': 0, 'y': 0, 'width': 0, 'height': 0}
                     
                     # Only add elements with some identifying information
                     if (element_info['name'] or 
@@ -364,7 +515,8 @@ class ElementDetector:
                     
                     # Recursively collect child elements
                     try:
-                        for child in ctrl.GetChildren():
+                        children = ctrl.GetChildren()
+                        for child in children:
                             collect_element_info(child, depth + 1)
                     except:
                         pass
@@ -472,46 +624,66 @@ IMPORTANT: Only return valid JSON. Do not include any other text or explanation 
                 return None
             
             # Find the window again
-            window = auto.WindowControl(searchDepth=1, Name=window_name)
-            if not window.Exists(0, False):
-                windows = auto.FindAll(lambda ctrl, depth: 
-                    ctrl.ControlType == auto.ControlType.WindowControl and 
-                    window_name.lower() in ctrl.Name.lower()
-                )
-                if windows:
-                    window = windows[0]
-                else:
-                    return None
+            window = None
+            try:
+                window = auto.WindowControl(searchDepth=1, Name=window_name)
+                if not window.Exists(0, False):
+                    window = None
+            except:
+                pass
+            
+            if not window:
+                try:
+                    desktop = auto.GetRootControl()
+                    windows = desktop.GetChildren()
+                    for w in windows:
+                        try:
+                            if (hasattr(w, 'Name') and w.Name and 
+                                window_name.lower() in w.Name.lower() and
+                                hasattr(w, 'ControlType') and
+                                w.ControlType == auto.ControlType.WindowControl):
+                                window = w
+                                break
+                        except:
+                            continue
+                except:
+                    pass
+            
+            if not window:
+                return None
             
             # Search for the element using LLM-provided properties
             name = matched_element.get('name', '')
             automation_id = matched_element.get('automation_id', '')
             class_name = matched_element.get('class_name', '')
             
-            # Try multiple search strategies based on available properties
-            search_strategies = []
-            
-            if automation_id:
-                search_strategies.append(lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == automation_id))
-            
-            if name:
-                search_strategies.append(lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'Name') and ctrl.Name == name))
-            
-            if class_name:
-                search_strategies.append(lambda: window.FindFirst(lambda ctrl, depth: 
-                    hasattr(ctrl, 'ClassName') and ctrl.ClassName == class_name))
-            
-            # Try each search strategy
-            for strategy in search_strategies:
+            # Search function that works without FindFirst
+            def search_element(ctrl, target_name, target_automation_id, target_class, max_depth=5, current_depth=0):
+                if current_depth >= max_depth:
+                    return None
                 try:
-                    element = strategy()
-                    if element:
-                        print(f"✅ Found element using LLM guidance: {name or automation_id or class_name}")
-                        return {'type': 'ui_automation', 'element': element}
+                    # Check if this control matches
+                    if target_automation_id and hasattr(ctrl, 'AutomationId') and ctrl.AutomationId == target_automation_id:
+                        return ctrl
+                    if target_name and hasattr(ctrl, 'Name') and ctrl.Name == target_name:
+                        return ctrl
+                    if target_class and hasattr(ctrl, 'ClassName') and ctrl.ClassName == target_class:
+                        return ctrl
+                    
+                    # Search children
+                    children = ctrl.GetChildren()
+                    for child in children:
+                        result = search_element(child, target_name, target_automation_id, target_class, max_depth, current_depth + 1)
+                        if result:
+                            return result
                 except:
-                    continue
+                    pass
+                return None
+            
+            element = search_element(window, name, automation_id, class_name)
+            if element:
+                print(f"✅ Found element using LLM guidance: {name or automation_id or class_name}")
+                return {'type': 'ui_automation', 'element': element}
             
             print("❌ Could not find element despite LLM guidance")
             return None
